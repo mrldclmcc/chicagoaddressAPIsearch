@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Property Insight | Chicago</title>
+    <title>Chicago Address Search</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -21,7 +21,7 @@
         .wrapper { width: 100%; max-width: 850px; padding: 60px 24px; }
         header { margin-bottom: 40px; }
         h1 { font-weight: 700; font-size: 2.2rem; margin: 0; letter-spacing: -0.04em; }
-        .tagline { color: var(--text-secondary); margin-top: 8px; }
+        .tagline { color: var(--text-secondary); margin-top: 12px; font-size: 1rem; line-height: 1.5; max-width: 600px; }
 
         .search-container { background: var(--panel); border-radius: 16px; padding: 6px; display: flex; gap: 8px; border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
         input { flex: 1; background: transparent; border: none; padding: 14px; color: white; font-size: 1.1rem; outline: none; }
@@ -47,18 +47,19 @@
         .contact-role { font-size: 0.65rem; font-weight: 800; color: var(--contact-label); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;}
         .contact-name { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
 
-        .card-footer { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; gap: 30px; }
+        .card-footer { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; gap: 40px; flex-wrap: wrap; }
         .stat { display: flex; flex-direction: column; }
-        .stat-label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; }
-        .stat-value { font-size: 0.95rem; font-weight: 700; color: var(--success); }
+        .stat-label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.025em; }
+        .stat-value { font-size: 0.95rem; font-weight: 700; color: var(--text-primary); }
+        .stat-success { color: var(--success); }
     </style>
 </head>
 <body>
 
 <div class="wrapper">
     <header>
-        <h1>Property Insight</h1>
-        <div class="tagline">Real-time Chicago Municipal Data Search</div>
+        <h1>Chicago Address Search</h1>
+        <div class="tagline">Search addresses in the following City of Chicago API datasets: <strong>Building Permits</strong>, <strong>City Owned Land Inventory/Sales</strong>, and <strong>TIF Approved Projects</strong>.</div>
     </header>
 
     <div class="search-container">
@@ -67,7 +68,7 @@
     </div>
 
     <div class="meta-bar">
-        <div id="status">Ready to search.</div>
+        <div id="status">Enter an address to begin.</div>
         <button id="csvBtn" class="export-btn" onclick="exportData()">Export Dataset</button>
     </div>
 
@@ -77,7 +78,6 @@
 <script>
     let globalStore = [];
 
-    // 1. ADDRESS NORMALIZATION (Replaces Python clean_text)
     function normalizeAddress(text) {
         if (!text) return "";
         let clean = text.toUpperCase().replace(/[^\w\s]/g, '');
@@ -85,7 +85,6 @@
         return clean.replace(noise, '').replace(/\s+/g, ' ').trim();
     }
 
-    // 2. CONTACT RESOLVER (Replaces Python resolve_contacts)
     function resolveContacts(record) {
         const searchMap = {
             resolved_owner: "OWNER",
@@ -94,32 +93,22 @@
             resolved_plumber: "PLUMBING",
             resolved_mason: "MASONRY"
         };
-
-        // Initialize resolved fields
         Object.keys(searchMap).forEach(key => record[key] = "");
-
-        // Scan 15 potential slots
         for (let i = 1; i <= 15; i++) {
             const typeKey = `contact_${i}_type`;
             const nameKey = `contact_${i}_name`;
-            
             const rawType = (record[typeKey] || "").toUpperCase();
             const rawName = record[nameKey] || "";
-
             if (!rawName) continue;
-
             for (const [resKey, keyword] of Object.entries(searchMap)) {
                 if (rawType.includes(keyword)) {
-                    record[resKey] = record[resKey] 
-                        ? `${record[resKey]}, ${rawName}` 
-                        : rawName;
+                    record[resKey] = record[resKey] ? `${record[resKey]}, ${rawName}` : rawName;
                 }
             }
         }
         return record;
     }
 
-    // 3. MAIN SEARCH ENGINE
     async function doSearch() {
         const input = document.getElementById('addressInput').value;
         const grid = document.getElementById('results');
@@ -130,7 +119,7 @@
 
         btn.disabled = true;
         grid.innerHTML = "";
-        status.innerText = "Querying Chicago Data Portal...";
+        status.innerText = "Accessing City Portals...";
         
         const normInput = normalizeAddress(input);
         const parts = normInput.split(' ');
@@ -147,7 +136,6 @@
 
         try {
             for (const ds of datasets) {
-                // Socrata SoQL Query
                 const where = ds.id === "ydr8-5enu" ? `${ds.num_field}=${num}` : `starts_with(${ds.num_field}, '${num}')`;
                 const url = `https://data.cityofchicago.org/resource/${ds.id}.json?$where=${where}`;
 
@@ -168,28 +156,42 @@
 
             globalStore = results;
             renderCards(results);
-            status.innerText = results.length > 0 ? `Found ${results.length} records.` : "No records found.";
+            status.innerText = results.length > 0 ? `Matched ${results.length} municipal records.` : "No matches found.";
             document.getElementById('csvBtn').style.display = results.length > 0 ? "block" : "none";
 
         } catch (err) {
             console.error(err);
-            status.innerText = "Error connecting to data source.";
+            status.innerText = "Connection error.";
         } finally {
             btn.disabled = false;
         }
     }
 
-    // 4. UI RENDERING
     function renderCards(data) {
         const grid = document.getElementById('results');
         data.forEach(item => {
             const isPermit = item.__api_source === "Building Permit";
+            const isLand = item.__api_source === "Land Inventory";
             const card = document.createElement('div');
             card.className = `card ${isPermit ? 'card-permit' : ''}`;
             
             const title = item.project_name || item.permit_type || item.address || "Record";
-            const body = item.work_description || item.property_status || "No description provided.";
-            const cost = item.reported_cost || item.total_project_cost || null;
+            const body = item.work_description || item.property_status || "No description available.";
+            
+            // Logic for labels
+            let refLabel = "Reference";
+            let refValue = item.id || "N/A";
+            let costLabel = "Total Value";
+            let costValue = item.reported_cost || item.total_project_cost || null;
+
+            if (isPermit) {
+                refLabel = "Permit Number";
+                refValue = item.permit_ || "N/A";
+                costLabel = "Reported Cost";
+            } else if (isLand) {
+                refLabel = "PIN";
+                refValue = item.pin || "N/A";
+            }
 
             let contactsHtml = "";
             if (isPermit) {
@@ -200,7 +202,6 @@
                     { k: 'resolved_plumber', l: 'Plumber' },
                     { k: 'resolved_mason', l: 'Masonry' }
                 ];
-                
                 const active = roles.filter(r => item[r.k]);
                 if (active.length > 0) {
                     contactsHtml = `<div class="contacts-grid">${active.map(r => `
@@ -211,6 +212,17 @@
                 }
             }
 
+            // Formatting Date for Building Permits
+            let dateHtml = "";
+            if (isPermit && item.issue_date) {
+                const d = new Date(item.issue_date);
+                const formattedDate = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                dateHtml = `<div class="stat">
+                                <span class="stat-label">Issue Date</span>
+                                <span class="stat-value">${formattedDate}</span>
+                            </div>`;
+            }
+
             card.innerHTML = `
                 <span class="badge">${item.__api_source}</span>
                 <div class="card-title">${title}</div>
@@ -218,12 +230,13 @@
                 ${contactsHtml}
                 <div class="card-footer">
                     <div class="stat">
-                        <span class="stat-label">Reference</span>
-                        <span class="stat-value" style="color:var(--text-primary)">${item.permit_ || item.pin || 'N/A'}</span>
+                        <span class="stat-label">${refLabel}</span>
+                        <span class="stat-value">${refValue}</span>
                     </div>
-                    ${cost ? `<div class="stat">
-                        <span class="stat-label">Value</span>
-                        <span class="stat-value">$${Number(cost).toLocaleString()}</span>
+                    ${dateHtml}
+                    ${costValue ? `<div class="stat">
+                        <span class="stat-label">${costLabel}</span>
+                        <span class="stat-value stat-success">$${Number(costValue).toLocaleString()}</span>
                     </div>` : ''}
                 </div>
             `;
@@ -231,7 +244,6 @@
         });
     }
 
-    // 5. CSV EXPORTER
     function exportData() {
         if (!globalStore.length) return;
         const keys = Array.from(new Set(globalStore.flatMap(o => Object.keys(o))));
@@ -239,12 +251,11 @@
             keys.join(','),
             ...globalStore.map(row => keys.map(k => `"${String(row[k] || '').replace(/"/g, '""')}"`).join(','))
         ].join('\n');
-        
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `Chicago_Data_Export_${Date.now()}.csv`;
+        a.download = `Chicago_Data_Search_${Date.now()}.csv`;
         a.click();
     }
 
