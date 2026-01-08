@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property Insight | Chicago</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --accent: #38bdf8;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+            --success: #10b981;
+            --contact-label: #818cf8;
+        }
+
+        body { background-color: var(--bg); color: var(--text-primary); font-family: 'Inter', sans-serif; margin: 0; display: flex; justify-content: center; }
+        .wrapper { width: 100%; max-width: 850px; padding: 60px 24px; }
+        header { margin-bottom: 40px; }
+        h1 { font-weight: 700; font-size: 2.2rem; margin: 0; letter-spacing: -0.04em; }
+        .tagline { color: var(--text-secondary); margin-top: 8px; }
+
+        .search-container { background: var(--panel); border-radius: 16px; padding: 6px; display: flex; gap: 8px; border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        input { flex: 1; background: transparent; border: none; padding: 14px; color: white; font-size: 1.1rem; outline: none; }
+        button { background: var(--accent); color: #0f172a; border: none; padding: 0 28px; border-radius: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+        button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .meta-bar { margin-top: 20px; display: flex; justify-content: space-between; align-items: center; min-height: 40px; }
+        #status { font-size: 0.85rem; color: var(--accent); font-weight: 500; }
+        .export-btn { background: transparent; border: 1px solid var(--border); color: var(--text-primary); padding: 8px 16px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; display: none; }
+
+        .results-list { margin-top: 40px; display: grid; gap: 24px; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 28px; border-left: 4px solid transparent; animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .card-permit { border-left-color: var(--accent); }
+        
+        .badge { background: rgba(56, 189, 248, 0.1); color: var(--accent); padding: 4px 10px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; margin-bottom: 16px; display: inline-block; }
+        .card-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 10px; }
+        .card-body { color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; margin-bottom: 20px; }
+
+        .contacts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; background: rgba(15, 23, 42, 0.4); padding: 16px; border-radius: 12px; border: 1px solid var(--border); }
+        .contact-item { display: flex; flex-direction: column; }
+        .contact-role { font-size: 0.65rem; font-weight: 800; color: var(--contact-label); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;}
+        .contact-name { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
+
+        .card-footer { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; gap: 30px; }
+        .stat { display: flex; flex-direction: column; }
+        .stat-label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; }
+        .stat-value { font-size: 0.95rem; font-weight: 700; color: var(--success); }
+    </style>
+</head>
+<body>
+
+<div class="wrapper">
+    <header>
+        <h1>Property Insight</h1>
+        <div class="tagline">Real-time Chicago Municipal Data Search</div>
+    </header>
+
+    <div class="search-container">
+        <input type="text" id="addressInput" placeholder="Enter address (e.g. 5330 S Mason Ave)">
+        <button id="searchBtn">Search</button>
+    </div>
+
+    <div class="meta-bar">
+        <div id="status">Ready to search.</div>
+        <button id="csvBtn" class="export-btn" onclick="exportData()">Export Dataset</button>
+    </div>
+
+    <div id="results" class="results-list"></div>
+</div>
+
+<script>
+    let globalStore = [];
+
+    // 1. ADDRESS NORMALIZATION (Replaces Python clean_text)
+    function normalizeAddress(text) {
+        if (!text) return "";
+        let clean = text.toUpperCase().replace(/[^\w\s]/g, '');
+        const noise = /\b(NORTH|SOUTH|EAST|WEST|N|S|E|W|ST|STREET|AVE|AVENUE|DR|DRIVE|RD|ROAD|BLVD|BOULEVARD|PL|PLACE|JR|SR)\b/g;
+        return clean.replace(noise, '').replace(/\s+/g, ' ').trim();
+    }
+
+    // 2. CONTACT RESOLVER (Replaces Python resolve_contacts)
+    function resolveContacts(record) {
+        const searchMap = {
+            resolved_owner: "OWNER",
+            resolved_gc: "GENERAL CONTRACTOR",
+            resolved_architect: "ARCHITECT",
+            resolved_plumber: "PLUMBING",
+            resolved_mason: "MASONRY"
+        };
+
+        // Initialize resolved fields
+        Object.keys(searchMap).forEach(key => record[key] = "");
+
+        // Scan 15 potential slots
+        for (let i = 1; i <= 15; i++) {
+            const typeKey = `contact_${i}_type`;
+            const nameKey = `contact_${i}_name`;
+            
+            const rawType = (record[typeKey] || "").toUpperCase();
+            const rawName = record[nameKey] || "";
+
+            if (!rawName) continue;
+
+            for (const [resKey, keyword] of Object.entries(searchMap)) {
+                if (rawType.includes(keyword)) {
+                    record[resKey] = record[resKey] 
+                        ? `${record[resKey]}, ${rawName}` 
+                        : rawName;
+                }
+            }
+        }
+        return record;
+    }
+
+    // 3. MAIN SEARCH ENGINE
+    async function doSearch() {
+        const input = document.getElementById('addressInput').value;
+        const grid = document.getElementById('results');
+        const status = document.getElementById('status');
+        const btn = document.getElementById('searchBtn');
+
+        if (!input) return;
+
+        btn.disabled = true;
+        grid.innerHTML = "";
+        status.innerText = "Querying Chicago Data Portal...";
+        
+        const normInput = normalizeAddress(input);
+        const parts = normInput.split(' ');
+        const num = parts[0];
+        const core = parts.slice(1).join(' ');
+
+        const datasets = [
+            { id: "ydr8-5enu", name: "Building Permit", num_field: "street_number" },
+            { id: "aksk-kvfp", name: "Land Inventory", num_field: "address" },
+            { id: "mex4-ppfc", name: "TIF Project", num_field: "address" }
+        ];
+
+        let results = [];
+
+        try {
+            for (const ds of datasets) {
+                // Socrata SoQL Query
+                const where = ds.id === "ydr8-5enu" ? `${ds.num_field}=${num}` : `starts_with(${ds.num_field}, '${num}')`;
+                const url = `https://data.cityofchicago.org/resource/${ds.id}.json?$where=${where}`;
+
+                const response = await fetch(url);
+                if (!response.ok) continue;
+                
+                const data = await response.json();
+
+                data.forEach(entry => {
+                    const addrText = entry.address || `${entry.street_direction || ''} ${entry.street_name || ''}`;
+                    if (normalizeAddress(addrText).includes(core)) {
+                        entry.__api_source = ds.name;
+                        if (ds.id === "ydr8-5enu") resolveContacts(entry);
+                        results.push(entry);
+                    }
+                });
+            }
+
+            globalStore = results;
+            renderCards(results);
+            status.innerText = results.length > 0 ? `Found ${results.length} records.` : "No records found.";
+            document.getElementById('csvBtn').style.display = results.length > 0 ? "block" : "none";
+
+        } catch (err) {
+            console.error(err);
+            status.innerText = "Error connecting to data source.";
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // 4. UI RENDERING
+    function renderCards(data) {
+        const grid = document.getElementById('results');
+        data.forEach(item => {
+            const isPermit = item.__api_source === "Building Permit";
+            const card = document.createElement('div');
+            card.className = `card ${isPermit ? 'card-permit' : ''}`;
+            
+            const title = item.project_name || item.permit_type || item.address || "Record";
+            const body = item.work_description || item.property_status || "No description provided.";
+            const cost = item.reported_cost || item.total_project_cost || null;
+
+            let contactsHtml = "";
+            if (isPermit) {
+                const roles = [
+                    { k: 'resolved_owner', l: 'Owner' },
+                    { k: 'resolved_gc', l: 'General Contractor' },
+                    { k: 'resolved_architect', l: 'Architect' },
+                    { k: 'resolved_plumber', l: 'Plumber' },
+                    { k: 'resolved_mason', l: 'Masonry' }
+                ];
+                
+                const active = roles.filter(r => item[r.k]);
+                if (active.length > 0) {
+                    contactsHtml = `<div class="contacts-grid">${active.map(r => `
+                        <div class="contact-item">
+                            <span class="contact-role">${r.l}</span>
+                            <span class="contact-name">${item[r.k]}</span>
+                        </div>`).join('')}</div>`;
+                }
+            }
+
+            card.innerHTML = `
+                <span class="badge">${item.__api_source}</span>
+                <div class="card-title">${title}</div>
+                <div class="card-body">${body}</div>
+                ${contactsHtml}
+                <div class="card-footer">
+                    <div class="stat">
+                        <span class="stat-label">Reference</span>
+                        <span class="stat-value" style="color:var(--text-primary)">${item.permit_ || item.pin || 'N/A'}</span>
+                    </div>
+                    ${cost ? `<div class="stat">
+                        <span class="stat-label">Value</span>
+                        <span class="stat-value">$${Number(cost).toLocaleString()}</span>
+                    </div>` : ''}
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+
+    // 5. CSV EXPORTER
+    function exportData() {
+        if (!globalStore.length) return;
+        const keys = Array.from(new Set(globalStore.flatMap(o => Object.keys(o))));
+        const csv = [
+            keys.join(','),
+            ...globalStore.map(row => keys.map(k => `"${String(row[k] || '').replace(/"/g, '""')}"`).join(','))
+        ].join('\n');
+        
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Chicago_Data_Export_${Date.now()}.csv`;
+        a.click();
+    }
+
+    document.getElementById('searchBtn').addEventListener('click', doSearch);
+    document.getElementById('addressInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') doSearch();
+    });
+</script>
+</body>
+</html>
